@@ -1,0 +1,92 @@
+# -*- mode: ruby -*-
+# vi: set ft=ruby :
+
+Vagrant.configure("2") do |config|
+  # Webserver-Konfiguration
+  config.vm.define "web" do |web|
+    web.vm.box = "ubuntu/bionic64"
+    web.vm.network "forwarded_port", guest: 80, host: 8080
+
+    web.vm.provider "virtualbox" do |vb|
+      vb.memory = "1024"
+      vb.cpus = 2
+    end
+
+    web.vm.provision "shell", inline: <<-SHELL
+      apt-get update
+      apt-get install -y apache2 php libapache2-mod-php php-mysql
+
+      # Erstellen einer benutzerdefinierten index.html
+      echo '<!DOCTYPE html>
+      <html>
+      <head>
+        <title>Willkommen bei Vagrant Apache</title>
+      </head>
+      <body>
+        <h1>Hallo Welt! Dies ist eine benutzerdefinierte index.html-Seite.</h1>
+      </body>
+      </html>' > /var/www/html/index.html
+
+      # Erstellen einer PHP-Seite, die auf die MySQL-Datenbank zugreift
+      echo '<?php
+      $servername = "192.168.33.11";
+      $username = "root";
+      $password = "root";
+      $dbname = "testdb";
+
+      // Verbindung zur Datenbank herstellen
+      $conn = new mysqli($servername, $username, $password, $dbname);
+
+      // Verbindung prüfen
+      if ($conn->connect_error) {
+        die("Connection failed: " . $conn->connect_error);
+      }
+
+      echo "Connected successfully<br>";
+
+      $sql = "SELECT id, name FROM testtable";
+      $result = $conn->query($sql);
+
+      if ($result->num_rows > 0) {
+        while($row = $result->fetch_assoc()) {
+          echo "id: " . $row["id"]. " - Name: " . $row["name"]. "<br>";
+        }
+      } else {
+        echo "0 results";
+      }
+      $conn->close();
+      ?>' > /var/www/html/index.php
+
+      systemctl enable apache2
+      systemctl restart apache2
+    SHELL
+  end
+
+  # Datenbankserver-Konfiguration
+  config.vm.define "db" do |db|
+    db.vm.box = "ubuntu/bionic64"
+    db.vm.network "private_network", ip: "192.168.33.11"
+
+    db.vm.provider "virtualbox" do |vb|
+      vb.memory = "1024"
+      vb.cpus = 1
+    end
+
+    db.vm.provision "shell", inline: <<-SHELL
+      apt-get update
+      apt-get install -y mysql-server
+
+      # Konfiguration der MySQL-Datenbank
+      mysql -u root -e "CREATE DATABASE testdb;"
+      mysql -u root -e "CREATE USER 'root'@'%' IDENTIFIED BY 'root';"
+      mysql -u root -e "GRANT ALL PRIVILEGES ON testdb.* TO 'root'@'%';"
+      mysql -u root -e "FLUSH PRIVILEGES;"
+      mysql -u root -e "USE testdb; CREATE TABLE testtable (id INT AUTO_INCREMENT PRIMARY KEY, name VARCHAR(255) NOT NULL);"
+      mysql -u root -e "USE testdb; INSERT INTO testtable (name) VALUES ('Testname');"
+      
+      # Konfigurieren von MySQL zur Annahme von Verbindungen von überall
+      sed -i 's/bind-address.*/bind-address = 0.0.0.0/' /etc/mysql/mysql.conf.d/mysqld.cnf
+      systemctl restart mysql
+    SHELL
+  end
+end
